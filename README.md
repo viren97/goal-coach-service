@@ -600,3 +600,7 @@ every background job (optimistic locking, see [ADR-003](docs/adr/003-optimistic-
 
 Authentication (Firebase/Supabase JWT), Flyway migrations, per-user AI budget, metrics/tracing,
 multi-goal support, and the mobile app itself. See [docs/ROADMAP.md](docs/ROADMAP.md).
+
+## License
+
+[Apache License 2.0](LICENSE).
