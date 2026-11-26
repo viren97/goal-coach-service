@@ -1,0 +1,21 @@
+spring:
+  datasource:
+    url: jdbc:sqlite:build/coach-test.db?journal_mode=WAL&busy_timeout=5000
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+coach:
+  ai:
+    provider: template
+  push:
+    provider: log
+  outbox:
+    poll-interval-ms: 50
+  # Time-driven jobs are triggered by the tests themselves (with a controllable clock).
+  nudge:
+    scheduler-interval-ms: 3600000
+    expiry-interval-ms: 3600000
+  sweeper:
+    interval-ms: 3600000
+  recap:
+    cron: "-"
