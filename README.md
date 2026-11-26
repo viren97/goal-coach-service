@@ -34,7 +34,7 @@ Anthropic Java SDK (Claude) · Firebase Cloud Messaging · Docker Compose · Hel
 | **Concurrency control** | Optimistic locking (`@Version`) on every entity, whole-transaction retry, safe across many replicas without row locks | [`TaskService`](src/main/java/dev/viren/coach/task/TaskService.java) · [`NudgeScheduler`](src/main/java/dev/viren/coach/nudge/NudgeScheduler.java) · [ADR-003](docs/adr/003-optimistic-locking.md) |
 | **Crash recovery** | Sweeper re-drives work stranded by lost messages or crashed workers; bounded retries, then a terminal failure state | [`StuckWorkSweeper`](src/main/java/dev/viren/coach/recovery/StuckWorkSweeper.java) · test `sweeperRecoversAPlanWhoseMessageWasLost` |
 | **Domain modelling** | Sealed-class state machine: each status allows only its own transitions, and illegal moves throw instead of corrupting data | [`TaskState`](src/main/java/dev/viren/coach/task/TaskState.java) · [`TaskStateTest`](src/test/java/dev/viren/coach/task/TaskStateTest.java) |
-| **Production AI integration** | Claude via the official SDK with schema-constrained structured outputs; output treated as untrusted (validated, clamped); deterministic fallback, so the AI is never a single point of failure; cheaper model for frequent calls | [`ClaudeAiCoach`](src/main/java/dev/viren/coach/ai/ClaudeAiCoach.java) · [`GuardedAiCoach`](src/main/java/dev/viren/coach/ai/GuardedAiCoach.java) · [`GuardedAiCoachTest`](src/test/java/dev/viren/coach/ai/GuardedAiCoachTest.java) · [docs/AI.md](docs/AI.md) |
+| **Production AI integration** | Claude via the official SDK with schema-constrained structured outputs; output treated as untrusted (validated, clamped); deterministic fallback, so the AI is never a single point of failure; cheaper model for frequent calls | [`ClaudeAiCoach`](src/main/java/dev/viren/coach/ai/ClaudeAiCoach.java) · [`GuardedAiCoach`](src/main/java/dev/viren/coach/ai/GuardedAiCoach.java) · [`GuardedAiCoachTest`](src/test/java/dev/viren/coach/ai/GuardedAiCoachTest.java) · [ADR-004](docs/adr/004-ai-behind-a-guarded-port.md) |
 | **Scalable scheduling** | Each goal stores its `next_nudge_at` in an indexed column, so scheduler cost scales with *due* goals, not total users; time-zone and DST correct | [`NudgeSlotPlanner`](src/main/java/dev/viren/coach/nudge/NudgeSlotPlanner.java) · [`NudgeSlotPlannerTest`](src/test/java/dev/viren/coach/nudge/NudgeSlotPlannerTest.java) · [ADR-002](docs/adr/002-indexed-next-nudge-polling.md) |
 | **Product thinking in code** | Adaptive difficulty, notification-fatigue back-off with a one-time check-in, learned response hour, push → action rate as the key metric | [`DifficultyPolicy`](src/main/java/dev/viren/coach/task/DifficultyPolicy.java) · [`FatigueGuard`](src/main/java/dev/viren/coach/nudge/FatigueGuard.java) · test `ignoredPushesBackOffEaseUpAndAskToCheckIn` |
 | **API design** | Idempotency keys with request fingerprinting (replay → 200, misuse → 422), 202 for async work, one error contract, actions idempotent by state | [`GoalService`](src/main/java/dev/viren/coach/goal/GoalService.java) · [docs/API.md](docs/API.md) |
@@ -64,7 +64,8 @@ runs with zero setup or as a full stack with `docker compose up`.
 - [Testing](#testing)
 - [Project layout](#project-layout)
 - [Extending](#extending)
-- Docs: [API](docs/API.md) · [AI integration](docs/AI.md) · [Deployment & secrets](docs/DEPLOYMENT.md) · [Roadmap](docs/ROADMAP.md)
+- [Scaling plan](#scaling-plan)
+- Docs: [Decision records](docs/adr/) · [API](docs/API.md) · [AI integration](docs/AI.md) · [Deployment & secrets](docs/DEPLOYMENT.md) · [Roadmap](docs/ROADMAP.md)
 
 ---
 
@@ -579,6 +580,21 @@ docs/              API, AI integration, deployment, roadmap
 - **New AI provider:** an `AiCoach` adapter. `GuardedAiCoach` validates its output and adds the fallback automatically.
 - **New push channel** (email, SMS, web push): a `PushGateway` adapter.
 - **New coaching rule:** change `DifficultyPolicy`, `FatigueGuard` or `NudgeSlotPlanner`, which are pure classes with unit tests.
+
+## Scaling plan
+
+What holds today, what breaks first, and what to change. The order follows the expected bottleneck.
+
+| Scale (active goals) | First bottleneck | Change |
+|---|---|---|
+| **~10k** (one pod + SQLite → Postgres) | SQLite's single writer | Use the `docker` profile: Postgres, Kafka, Redis. No code changes |
+| **~100k** | Polling for due goals, outbox rows piling up | Already indexed (`status, next_nudge_at`). Add a cleanup job for published outbox rows; raise the scheduler batch size |
+| **~1M** | One scheduler scan for all pods; hourly recap scan over every active goal | Shard the due-goal scan by `hash(goal_id) % pods`; add an indexed `next_recap_at` like `next_nudge_at`; partition Kafka by goal id (already keyed) |
+| **~10M** | Postgres writes; FCM throughput; AI cost | Partition the `tasks` table by goal; batch FCM sends; per-user AI budget, prompt caching, and the cheaper model for more call types |
+| **Global** | Latency, data residency | Regional deployments that own their users; inference geography pinned per region |
+
+Things that already scale horizontally without change: the API (stateless), every queue consumer (idempotent), and
+every background job (optimistic locking, see [ADR-003](docs/adr/003-optimistic-locking.md)).
 
 ## Not built yet
 
