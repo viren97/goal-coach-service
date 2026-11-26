@@ -23,8 +23,33 @@ Anthropic Java SDK (Claude) · Firebase Cloud Messaging · Docker Compose · Hel
 
 ---
 
+## Engineering highlights
+
+> **For reviewers:** each row below points to the code and the test that proves it. The reasoning behind
+> the main decisions is in the [architecture decision records](docs/adr/).
+
+| Skill | What I built | Proof |
+|---|---|---|
+| **Distributed-systems reliability** | Transactional outbox: every state change commits with its follow-up command or event; at-least-once delivery with idempotent consumers | [`OutboxService`](src/main/java/dev/viren/coach/outbox/OutboxService.java) · [`SendNudgeHandler`](src/main/java/dev/viren/coach/nudge/SendNudgeHandler.java) · test `duplicateSendNudgeDeliversOnce` · [ADR-001](docs/adr/001-transactional-outbox.md) |
+| **Concurrency control** | Optimistic locking (`@Version`) on every entity, whole-transaction retry, safe across many replicas without row locks | [`TaskService`](src/main/java/dev/viren/coach/task/TaskService.java) · [`NudgeScheduler`](src/main/java/dev/viren/coach/nudge/NudgeScheduler.java) · [ADR-003](docs/adr/003-optimistic-locking.md) |
+| **Crash recovery** | Sweeper re-drives work stranded by lost messages or crashed workers; bounded retries, then a terminal failure state | [`StuckWorkSweeper`](src/main/java/dev/viren/coach/recovery/StuckWorkSweeper.java) · test `sweeperRecoversAPlanWhoseMessageWasLost` |
+| **Domain modelling** | Sealed-class state machine: each status allows only its own transitions, and illegal moves throw instead of corrupting data | [`TaskState`](src/main/java/dev/viren/coach/task/TaskState.java) · [`TaskStateTest`](src/test/java/dev/viren/coach/task/TaskStateTest.java) |
+| **Production AI integration** | Claude via the official SDK with schema-constrained structured outputs; output treated as untrusted (validated, clamped); deterministic fallback, so the AI is never a single point of failure; cheaper model for frequent calls | [`ClaudeAiCoach`](src/main/java/dev/viren/coach/ai/ClaudeAiCoach.java) · [`GuardedAiCoach`](src/main/java/dev/viren/coach/ai/GuardedAiCoach.java) · [`GuardedAiCoachTest`](src/test/java/dev/viren/coach/ai/GuardedAiCoachTest.java) · [docs/AI.md](docs/AI.md) |
+| **Scalable scheduling** | Each goal stores its `next_nudge_at` in an indexed column, so scheduler cost scales with *due* goals, not total users; time-zone and DST correct | [`NudgeSlotPlanner`](src/main/java/dev/viren/coach/nudge/NudgeSlotPlanner.java) · [`NudgeSlotPlannerTest`](src/test/java/dev/viren/coach/nudge/NudgeSlotPlannerTest.java) · [ADR-002](docs/adr/002-indexed-next-nudge-polling.md) |
+| **Product thinking in code** | Adaptive difficulty, notification-fatigue back-off with a one-time check-in, learned response hour, push → action rate as the key metric | [`DifficultyPolicy`](src/main/java/dev/viren/coach/task/DifficultyPolicy.java) · [`FatigueGuard`](src/main/java/dev/viren/coach/nudge/FatigueGuard.java) · test `ignoredPushesBackOffEaseUpAndAskToCheckIn` |
+| **API design** | Idempotency keys with request fingerprinting (replay → 200, misuse → 422), 202 for async work, one error contract, actions idempotent by state | [`GoalService`](src/main/java/dev/viren/coach/goal/GoalService.java) · [docs/API.md](docs/API.md) |
+| **Clean architecture** | Ports and adapters for AI, push, queue and cache: in-memory ↔ Kafka, template ↔ Claude, log ↔ FCM, no-op ↔ Redis are swapped by config, with no code changes | [`AiCoach`](src/main/java/dev/viren/coach/ai/AiCoach.java) · [`PushGateway`](src/main/java/dev/viren/coach/push/PushGateway.java) · [`TaskQueue`](src/main/java/dev/viren/coach/queue/TaskQueue.java) |
+| **Testing strategy** | Pure policy classes unit-tested without Spring; 8 end-to-end scenarios on a real DB with a controllable clock and a recording push gateway | [`CoachFlowIntegrationTest`](src/test/java/dev/viren/coach/CoachFlowIntegrationTest.java) · [Testing](#testing) |
+| **Delivery & operations** | Multi-stage non-root Docker image, compose stack, Helm chart (HPA, probes, External Secrets), fail-fast secrets, CI for tests, image build and chart lint | [`Dockerfile`](Dockerfile) · [`deploy/helm/coach`](deploy/helm/coach) · [CI](.github/workflows/ci.yml) · [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) |
+
+**At a glance:** 100 production classes · 36 tests (28 unit, 8 end-to-end) · 16 focused commits, each of which compiles ·
+runs with zero setup or as a full stack with `docker compose up`.
+
+---
+
 ## Contents
 
+- [Engineering highlights](#engineering-highlights)
 - [The product loop](#the-product-loop)
 - [Quick start](#quick-start)
 - [Try it in 60 seconds](#try-it-in-60-seconds)
