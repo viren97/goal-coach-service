@@ -1,0 +1,89 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: goal-coach-service
+  datasource:
+    # WAL = concurrent readers + 1 writer; busy_timeout avoids instant SQLITE_BUSY errors
+    url: jdbc:sqlite:coach.db?journal_mode=WAL&busy_timeout=5000
+    driver-class-name: org.sqlite.JDBC
+    hikari:
+      # SQLite allows a single writer. One pooled connection serialises writes at the pool
+      # instead of failing with SQLITE_BUSY. Swap to Postgres + bigger pool for scale.
+      maximum-pool-size: 1
+  data:
+    redis:
+      repositories:
+        enabled: false        # Redis is only a cache here; all repositories are JPA
+  jpa:
+    database-platform: org.hibernate.community.dialect.SQLiteDialect
+    open-in-view: false
+    hibernate:
+      ddl-auto: update
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true         # /actuator/health/liveness and /readiness for Docker / Kubernetes
+  health:
+    redis:
+      enabled: false          # turned on in the docker profile, where Redis exists
+
+coach:
+  goals:
+    max-active-per-user: 1    # MVP: one goal at a time keeps the AI's tasks focused
+  queue:
+    type: in-memory           # in-memory | kafka (docker profile)
+    capacity: 10000
+    workers-per-topic: 4
+    max-attempts: 3
+    retry-backoff-ms: 200
+  outbox:
+    poll-interval-ms: 200
+    batch-size: 100
+  nudge:
+    scheduler-interval-ms: 30000   # how often due goals are picked up
+    batch-size: 100
+    ignore-after-minutes: 360      # a pushed task with no action after 6h counts as ignored
+    expiry-interval-ms: 300000
+    fatigue-threshold: 3           # ignored pushes in a row before backing off to 1/day + check-in
+    min-pool-size: 3               # queued tasks per active milestone before an AI top-up
+    top-up-batch-size: 5
+    empty-pool-retry-minutes: 5
+    default-snooze-minutes: 120
+  difficulty:
+    start: 2                       # 1 (tiny) .. 5 (stretch)
+    min: 1
+    max: 5
+    level-up-after-done: 3         # done in a row at a level before it gets harder
+    level-down-after-ignored: 2    # ignored in a row before it gets easier
+  recap:
+    cron: "0 0 * * * *"            # hourly; each goal gets its recap at its owner's local Sunday 18:00
+    day-of-week: SUNDAY
+    hour: 18
+  sweeper:
+    interval-ms: 30000
+    stale-after-ms: 120000         # PLANNING goals / SCHEDULED tasks untouched this long are retried
+    max-plan-attempts: 5
+  ai:
+    provider: ${COACH_AI_PROVIDER:template}   # template (deterministic, no key) | claude
+    plan-model: claude-opus-5-5               # plans and weekly recaps
+    quick-model: claude-haiku-5-5             # small task top-ups and swaps
+    max-tokens: 16000
+    timeout-seconds: 120
+    api-key: ${ANTHROPIC_API_KEY:}
+  push:
+    provider: ${COACH_PUSH_PROVIDER:log}      # log | fcm
+    fcm:
+      project-id: ${FCM_PROJECT_ID:}
+      service-account-json: ${FCM_SERVICE_ACCOUNT_JSON:}
+  cache:
+    progress:
+      enabled: false          # Redis cache for progress views (docker profile)
+      ttl-seconds: 300
